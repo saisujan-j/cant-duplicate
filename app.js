@@ -298,9 +298,14 @@ function processAndPrint() {
   const receiptTextEl = document.getElementById('receiptText');
   if (receiptTextEl) receiptTextEl.textContent = receiptText;
 
-  document.getElementById('tToken').textContent = state.token;
-  document.getElementById('tTotal').textContent = sum.toFixed(2);
-  document.getElementById('tDate').textContent = new Date().toLocaleString('en-IN');
+  // The printable receipt is now stored entirely in #receiptText.
+  // Keep these optional updates only if the old receipt elements exist.
+  const oldToken = document.getElementById('tToken');
+  const oldTotal = document.getElementById('tTotal');
+  const oldDate = document.getElementById('tDate');
+  if (oldToken) oldToken.textContent = state.token;
+  if (oldTotal) oldTotal.textContent = sum.toFixed(2);
+  if (oldDate) oldDate.textContent = new Date().toLocaleString('en-IN');
 
   const orderRecord = {
     token: state.token,
@@ -328,7 +333,7 @@ function processAndPrint() {
   if (/Android/i.test(navigator.userAgent)) {
     const rawbtUrl =
       'intent:' +
-      encodeURI(receiptText) +
+      encodeURIComponent(receiptText) +
       '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
 
     let leftPage = false;
@@ -342,17 +347,22 @@ function processAndPrint() {
 
     document.addEventListener('visibilitychange', onVisibilityChange);
 
-    // This is executed directly from the Print button click.
-    window.location.href = rawbtUrl;
+    // Launch RawBT through a temporary link created during the button click.
+    const rawbtLink = document.createElement('a');
+    rawbtLink.href = rawbtUrl;
+    rawbtLink.style.display = 'none';
+    document.body.appendChild(rawbtLink);
+    rawbtLink.click();
+    rawbtLink.remove();
 
-    // If Chrome/Android refuses the RawBT intent, fall back to normal printing.
+    // If RawBT is unavailable, fall back to Android/browser printing.
     setTimeout(() => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
 
       if (!leftPage && !document.hidden) {
         window.print();
       }
-    }, 1200);
+    }, 1500);
   } else {
     window.print();
   }
