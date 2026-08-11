@@ -229,9 +229,11 @@ function closeCartModal() {
 }
 
 function processAndPrint() {
-  if (state.cart.size === 0) return alert('Your cart is empty!');
+  if (state.cart.size === 0) {
+    alert('Your cart is empty!');
+    return;
+  }
 
-  // 32-column receipt: much more reliable on 58mm thermal printers.
   const WIDTH = 32;
 
   const fit = (value, width) => {
@@ -243,8 +245,7 @@ function processAndPrint() {
   const right = (value, width) => fit(value, width).padStart(width, ' ');
   const center = (value) => {
     value = fit(value, WIDTH);
-    const leftSpaces = Math.floor((WIDTH - value.length) / 2);
-    return ' '.repeat(leftSpaces) + value;
+    return ' '.repeat(Math.max(0, Math.floor((WIDTH - value.length) / 2))) + value;
   };
 
   const divider = '-'.repeat(WIDTH);
@@ -255,7 +256,7 @@ function processAndPrint() {
     center('VEG BITE'),
     center('College Canteen'),
     divider,
-    center(`TOKEN NO: ${state.token}`),
+    center('TOKEN NO: ' + state.token),
     center(new Date().toLocaleString('en-IN', {
       dateStyle: 'short',
       timeStyle: 'short'
@@ -275,33 +276,31 @@ function processAndPrint() {
       qty: i.qty
     });
 
-    const itemName = fit(i.name, 14);
-    const qtyPrice = `${i.qty}x${i.price}`;
-    const amount = `Rs.${itemTotal.toFixed(2)}`;
-
     receiptLines.push(
-      left(itemName, 14) +
-      left(qtyPrice, 7) +
-      right(amount, 11)
+      left(i.name, 14) +
+      left(i.qty + 'x' + i.price, 7) +
+      right('Rs.' + itemTotal.toFixed(2), 11)
     );
   });
 
   receiptLines.push(
     divider,
-    left('TOTAL:', 21) + right(`Rs.${sum.toFixed(2)}`, 11),
+    left('TOTAL:', 21) + right('Rs.' + sum.toFixed(2), 11),
     divider,
     center('Thank You! Visit Again'),
+    '',
     ''
   );
 
   const receiptText = receiptLines.join('\n');
 
-  // Keep the existing hidden receipt elements updated for compatibility.
+  // Update hidden receipt for browser-print fallback.
+  const receiptTextEl = document.getElementById('receiptText');
+  if (receiptTextEl) receiptTextEl.textContent = receiptText;
+
   document.getElementById('tToken').textContent = state.token;
   document.getElementById('tTotal').textContent = sum.toFixed(2);
   document.getElementById('tDate').textContent = new Date().toLocaleString('en-IN');
-  const receiptTextEl = document.getElementById('receiptText');
-  if (receiptTextEl) receiptTextEl.textContent = receiptText;
 
   const orderRecord = {
     token: state.token,
@@ -322,15 +321,38 @@ function processAndPrint() {
 
   closeCartModal();
 
-  // RawBT direct printing: skips Android/Chrome print preview and is much faster.
-  // On non-Android devices, use normal browser printing.
+  // IMPORTANT:
+  // RawBT's documented web format is:
+  // intent:<encoded text>#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;
+  // Use encodeURI here, matching RawBT examples.
   if (/Android/i.test(navigator.userAgent)) {
-    const rawbtIntent =
+    const rawbtUrl =
       'intent:' +
-      encodeURIComponent(receiptText) +
+      encodeURI(receiptText) +
       '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
 
-    window.location.href = rawbtIntent;
+    let leftPage = false;
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        leftPage = true;
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // This is executed directly from the Print button click.
+    window.location.href = rawbtUrl;
+
+    // If Chrome/Android refuses the RawBT intent, fall back to normal printing.
+    setTimeout(() => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+
+      if (!leftPage && !document.hidden) {
+        window.print();
+      }
+    }, 1200);
   } else {
     window.print();
   }
