@@ -235,58 +235,53 @@ function processAndPrint() {
   }
 
   const WIDTH = 32;
-
-  const fit = (value, width) => {
-    value = String(value ?? '');
-    return value.length > width ? value.slice(0, width) : value;
+  const fit = (v, w) => String(v ?? '').slice(0, w);
+  const left = (v, w) => fit(v, w).padEnd(w, ' ');
+  const right = (v, w) => fit(v, w).padStart(w, ' ');
+  const center = (v) => {
+    const s = fit(v, WIDTH);
+    return ' '.repeat(Math.max(0, Math.floor((WIDTH - s.length) / 2))) + s;
   };
+  const line = '-'.repeat(WIDTH);
 
-  const left = (value, width) => fit(value, width).padEnd(width, ' ');
-  const right = (value, width) => fit(value, width).padStart(width, ' ');
-  const center = (value) => {
-    value = fit(value, WIDTH);
-    return ' '.repeat(Math.max(0, Math.floor((WIDTH - value.length) / 2))) + value;
-  };
-
-  const divider = '-'.repeat(WIDTH);
+  let total = 0;
   const orderItems = [];
-  let sum = 0;
 
   const receiptLines = [
     center('VEG BITE'),
     center('College Canteen'),
-    divider,
+    line,
     center('TOKEN NO: ' + state.token),
     center(new Date().toLocaleString('en-IN', {
       dateStyle: 'short',
       timeStyle: 'short'
     })),
-    divider,
+    line,
     left('ITEM', 14) + left('QTY', 7) + right('AMOUNT', 11),
-    divider
+    line
   ];
 
-  state.cart.forEach(i => {
-    const itemTotal = i.qty * i.price;
-    sum += itemTotal;
+  state.cart.forEach(item => {
+    const amount = Number(item.qty) * Number(item.price);
+    total += amount;
 
     orderItems.push({
-      name: i.name,
-      price: i.price,
-      qty: i.qty
+      name: item.name,
+      price: item.price,
+      qty: item.qty
     });
 
     receiptLines.push(
-      left(i.name, 14) +
-      left(i.qty + 'x' + i.price, 7) +
-      right('Rs.' + itemTotal.toFixed(2), 11)
+      left(item.name, 14) +
+      left(item.qty + 'x' + item.price, 7) +
+      right('Rs.' + amount.toFixed(2), 11)
     );
   });
 
   receiptLines.push(
-    divider,
-    left('TOTAL:', 21) + right('Rs.' + sum.toFixed(2), 11),
-    divider,
+    line,
+    left('TOTAL:', 21) + right('Rs.' + total.toFixed(2), 11),
+    line,
     center('Thank You! Visit Again'),
     '',
     ''
@@ -294,27 +289,29 @@ function processAndPrint() {
 
   const receiptText = receiptLines.join('\n');
 
-  // Update hidden receipt for browser-print fallback.
+  // Fill the print-only receipt if it exists.
   const receiptTextEl = document.getElementById('receiptText');
-  if (receiptTextEl) receiptTextEl.textContent = receiptText;
+  if (receiptTextEl) {
+    receiptTextEl.textContent = receiptText;
+  }
 
-  // The printable receipt is now stored entirely in #receiptText.
-  // Keep these optional updates only if the old receipt elements exist.
-  const oldToken = document.getElementById('tToken');
-  const oldTotal = document.getElementById('tTotal');
-  const oldDate = document.getElementById('tDate');
-  if (oldToken) oldToken.textContent = state.token;
-  if (oldTotal) oldTotal.textContent = sum.toFixed(2);
-  if (oldDate) oldDate.textContent = new Date().toLocaleString('en-IN');
+  const tokenEl = document.getElementById('tToken');
+  const totalEl = document.getElementById('tTotal');
+  const dateEl = document.getElementById('tDate');
 
+  if (tokenEl) tokenEl.textContent = state.token;
+  if (totalEl) totalEl.textContent = total.toFixed(2);
+  if (dateEl) dateEl.textContent = new Date().toLocaleString('en-IN');
+
+  // Save order without waiting for Firebase.
   const orderRecord = {
     token: state.token,
     items: orderItems,
-    total: sum,
+    total: total,
     createdAt: new Date().toISOString()
   };
 
-  const sales = JSON.parse(localStorage.getItem('vb_sales')) || [];
+  const sales = JSON.parse(localStorage.getItem('vb_sales') || '[]');
   sales.push(orderRecord);
   localStorage.setItem('vb_sales', JSON.stringify(sales));
 
@@ -324,48 +321,37 @@ function processAndPrint() {
     });
   }
 
-  closeCartModal();
+  // FIRST: send directly to RawBT using RawBT's simple custom URI scheme.
+  // This is the documented web form: rawbt:Hello,%20world!%0A
+  let rawbtStarted = false;
 
-  // IMPORTANT:
-  // RawBT's documented web format is:
-  // intent:<encoded text>#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;
-  // Use encodeURI here, matching RawBT examples.
   if (/Android/i.test(navigator.userAgent)) {
-    const rawbtUrl =
-      'intent:' +
-      encodeURIComponent(receiptText) +
-      '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;';
+    try {
+      const rawbtUrl = 'rawbt:' + encodeURIComponent(receiptText);
 
-    let leftPage = false;
+      const a = document.createElement('a');
+      a.href = rawbtUrl;
+      a.target = '_self';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
 
-    const onVisibilityChange = () => {
-      if (document.hidden) {
-        leftPage = true;
-        document.removeEventListener('visibilitychange', onVisibilityChange);
-      }
-    };
-
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    // Launch RawBT through a temporary link created during the button click.
-    const rawbtLink = document.createElement('a');
-    rawbtLink.href = rawbtUrl;
-    rawbtLink.style.display = 'none';
-    document.body.appendChild(rawbtLink);
-    rawbtLink.click();
-    rawbtLink.remove();
-
-    // If RawBT is unavailable, fall back to Android/browser printing.
-    setTimeout(() => {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-
-      if (!leftPage && !document.hidden) {
-        window.print();
-      }
-    }, 1500);
-  } else {
-    window.print();
+      rawbtStarted = true;
+    } catch (err) {
+      console.error('RawBT launch failed:', err);
+    }
   }
+
+  // Browser/Chrome fallback if RawBT cannot be opened.
+  setTimeout(() => {
+    if (!rawbtStarted || !document.hidden) {
+      window.print();
+    }
+  }, 1200);
+
+  // Do not clear the cart until the print request has been launched.
+  closeCartModal();
 
   state.token++;
   localStorage.setItem('vb_token', state.token);
